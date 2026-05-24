@@ -1,0 +1,10 @@
+# Local-dev overrides. `docker compose` auto-merges this on top of
+# docker-compose.yaml when both are present, so `docker compose up`
+# locally publishes :8000 for browser access. Coolify reads only the
+# base docker-compose.yaml (configured via docker_compose_location) and
+# leaves this file alone, so it won't try to bind a host port on the VM.
+services:
+  web:
+    ports:
+      # Loopback-only so the port isn't accidentally exposed on a LAN.
+      - "127.0.0.1:8000:8000"

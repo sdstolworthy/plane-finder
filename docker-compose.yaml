@@ -63,10 +63,10 @@ services:
         condition: service_completed_successfully
     expose:
       - "8000"
-    ports:
-      # Bind to loopback only so local dev hits http://localhost:8000
-      # without exposing the port on a Coolify VM's public interface.
-      - "127.0.0.1:8000:8000"
+    # No host `ports:` binding here — Coolify routes via Traefik using
+    # SERVICE_FQDN_WEB_8000, and on a busy host (Coolify's own Sentinel
+    # uses :8000) the bind would fight for the port. Local dev gets the
+    # host binding from docker-compose.override.yaml.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/"]
       interval: 30s
