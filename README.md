@@ -1,48 +1,111 @@
 # plane-finder
 
-Searches every Craigslist regional site's `aviation` category and prints
-the results. Scrapes the static search-result HTML at
-`/search/ava` on each subdomain — Craigslist disabled `?format=rss` for
-most clients, so HTML is the only surface that responds 200.
+Django web service that polls every Craigslist regional site's
+`aviation` category in the background, stores listings in Postgres, and
+serves a filterable list at `/`. Deployable to Coolify as-is.
 
-## Install
+## Architecture
 
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+```
+┌──────────┐   ┌──────────┐   ┌────────────┐
+│ db       │←──│ migrate  │   │ web        │  gunicorn @ :8000
+│ postgres │   │ one-shot │   │ Django     │  → list view + admin
+└────┬─────┘   └──────────┘   └────────────┘
+     │                              ↑
+     ↓                              │ reads
+┌──────────┐                   ┌────────────┐
+│ Listing  │←─── writes ───────│ worker     │  django-q2 qcluster
+│ rows     │                   │ poll_all() │  every POLL_INTERVAL_MINUTES
+└──────────┘                   └────────────┘
 ```
 
-## Usage
+- `web` — Django + Gunicorn + Whitenoise. List view at `/`, admin at
+  `/admin/`.
+- `worker` — Django-Q2 cluster running `listings.tasks.poll_all` on a
+  schedule. No Redis; the DB is the broker.
+- `migrate` — one-shot service that runs `migrate` + `collectstatic`
+  before `web` / `worker` start. Prevents the contenttypes race.
+- `db` — Postgres 16.
+
+## Local development
 
 ```sh
-# Every Craigslist site, all aviation listings, plain text:
-python plane_finder.py
-
-# Narrow by keyword:
-python plane_finder.py --query cessna
-
-# Restrict to specific subdomains (skips the sites-list fetch):
-python plane_finder.py --sites seattle,portland,sfbay --query 'super cub'
-
-# Machine-readable output:
-python plane_finder.py --query cirrus --format json > cirrus.json
-python plane_finder.py --query mooney --format csv > mooney.csv
+docker compose up --build
+# → http://localhost:8000
+# → http://localhost:8000/admin/  (create a superuser first)
 ```
 
-`--workers` (default 16) controls concurrency. Bumping it gets you results
-faster but also gets you rate-limited or banned faster — Craigslist is not
-fond of scrapers. Identify yourself with `--user-agent` and don't run this
-on a tight loop.
+Create a superuser:
 
-## Notes
+```sh
+docker compose exec web python manage.py createsuperuser
+```
 
-- Parses the static `cl-static-search-result` list items rendered by the
-  search page. One page per site (~120 hits); pagination is not wired up.
-- `ava` is the "aviation - all" category (combines `avo` by-owner and `avd`
-  by-dealer). Swap `AVIATION_CATEGORY` in the script if you want one or
-  the other specifically.
-- The sites list is fetched live from `craigslist.org/about/sites` so new
-  regions get picked up automatically.
-- The default User-Agent is a Chrome-on-Linux string because Craigslist
-  403s generic UAs at the edge. Override with `--user-agent` if you want.
+Force an immediate poll instead of waiting for the schedule:
+
+```sh
+docker compose exec worker python manage.py poll_now --query cessna
+```
+
+Knobs (via env or `.env` — see `.env.example`):
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `POLL_INTERVAL_MINUTES` | `60` | Schedule cadence |
+| `POLL_QUERY` | _empty_ | Keyword filter per site |
+| `POLL_SITES` | _empty (all ~700)_ | Comma-separated subdomain allowlist |
+| `POLL_WORKERS` | `8` | Concurrent fetches per poll cycle |
+| `Q_WORKERS` | `2` | Django-Q worker processes |
+
+## Deploying to Coolify
+
+The compose file uses Coolify's "magic" env vars so most of the wiring
+is automatic:
+
+- `SERVICE_FQDN_WEB_8000=/` — Coolify generates a public domain and
+  Traefik-routes it to `web:8000`. The same domain shows up as
+  `${SERVICE_FQDN_WEB}` (no port) and `${SERVICE_URL_WEB}` (with scheme)
+  for Django to consume.
+- `SERVICE_PASSWORD_POSTGRES` — auto-generated DB password, injected
+  into both `db` and `web`/`worker` for the `DATABASE_URL`.
+- `SERVICE_BASE64_SECRET` — auto-generated 32-byte Django secret key.
+
+Steps:
+
+1. Push this repo to GitHub.
+2. In Coolify, create a new "Docker Compose" resource pointing at the
+   repo. Coolify reads `docker-compose.yaml`.
+3. Set any non-magic overrides under **Environment Variables**
+   (`POLL_QUERY`, `POLL_INTERVAL_MINUTES`, etc.).
+4. Deploy.
+
+The published URL is the value Coolify shows for `SERVICE_FQDN_WEB`.
+
+### Note on Craigslist's anti-bot edge
+
+Craigslist 403s generic User-Agents at the edge. The default scraper UA
+is a Chrome-on-Linux string; override with `POLL_USER_AGENT` if needed.
+If the Coolify VM's IP range is on Craigslist's block list, you'll see
+zero scraped rows and 403s in the worker logs — there's no clean
+workaround short of routing through a residential proxy.
+
+## Project layout
+
+```
+plane-finder/
+├── Dockerfile
+├── docker-compose.yaml         # web + worker + migrate + db, Coolify-aware
+├── manage.py
+├── requirements.txt
+├── planefinder/                # Django project (settings, urls, wsgi)
+└── listings/                   # The app
+    ├── models.py               # Listing — deduped on URL
+    ├── scraper.py              # Pure Craigslist scraping helpers
+    ├── tasks.py                # poll_all() — the django-q2 task
+    ├── views.py                # GET / list + filter
+    ├── admin.py                # Django admin for Listing
+    ├── templates/listings/index.html
+    └── management/commands/
+        ├── seed_schedules.py   # registers the periodic schedule
+        └── poll_now.py         # synchronous one-off poll
+```

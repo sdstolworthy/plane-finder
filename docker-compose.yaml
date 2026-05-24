@@ -1,0 +1,91 @@
+# docker-compose for both local dev and Coolify.
+#
+# Coolify "Magic Environment Variables" do the heavy lifting:
+#   SERVICE_FQDN_WEB_8000      -> Traefik-routed public domain for `web:8000`
+#   SERVICE_PASSWORD_POSTGRES  -> auto-generated DB password
+#   SERVICE_BASE64_SECRET      -> auto-generated Django SECRET_KEY
+#
+# Locally these are unset, so the `${VAR:-default}` fallbacks kick in and
+# the stack runs against http://localhost:8000 with a dev secret. Do NOT
+# run the local fallbacks in production — Coolify replaces them.
+
+x-app-env: &app_env
+  DJANGO_SECRET_KEY: ${SERVICE_BASE64_SECRET:-dev-insecure-not-for-production-xxxxxxxxxxxxxxxxxxxxxxxx}
+  DJANGO_ALLOWED_HOSTS: "${SERVICE_FQDN_WEB:-*},localhost,127.0.0.1"
+  DJANGO_CSRF_TRUSTED: "${SERVICE_URL_WEB:-http://localhost:8000}"
+  DJANGO_DEBUG: "0"
+  DATABASE_URL: "postgres://planefinder:${SERVICE_PASSWORD_POSTGRES:-planefinder-dev}@db:5432/planefinder"
+  POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-60}
+  POLL_QUERY: ${POLL_QUERY:-}
+  POLL_SITES: ${POLL_SITES:-}
+  POLL_WORKERS: ${POLL_WORKERS:-8}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: planefinder
+      POSTGRES_USER: planefinder
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES:-planefinder-dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U planefinder -d planefinder"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: runs migrations + collectstatic, then exits cleanly. Web
+  # and worker block on `service_completed_successfully` so there's no
+  # race on django_content_type insertion.
+  migrate:
+    build: .
+    restart: "no"
+    command: sh -c "python manage.py migrate --no-input && python manage.py collectstatic --no-input"
+    environment: *app_env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: .
+    restart: unless-stopped
+    command: gunicorn planefinder.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile - --error-logfile -
+    environment:
+      <<: *app_env
+      # Coolify magic: assigns an HTTPS domain and Traefik-routes to :8000.
+      SERVICE_FQDN_WEB_8000: /
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    ports:
+      # Bind to loopback only so local dev hits http://localhost:8000
+      # without exposing the port on a Coolify VM's public interface.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: sh -c "python manage.py seed_schedules && exec python manage.py qcluster"
+    environment:
+      <<: *app_env
+      Q_WORKERS: ${Q_WORKERS:-2}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

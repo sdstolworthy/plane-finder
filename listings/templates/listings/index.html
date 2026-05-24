@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>plane-finder — Craigslist aircraft listings</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #161a22; --ink: #e6e8ec; --ink2: #9aa3b2;
+      --accent: #4cc2ff; --line: #232834; --price: #b6eb8a;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--ink); margin: 0;
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    header { padding: 18px 24px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 0 0 4px; font-size: 18px; }
+    header .meta { color: var(--ink2); font-size: 12px; }
+    header a { color: var(--accent); text-decoration: none; }
+    form.filters { display: flex; gap: 8px; padding: 12px 24px;
+      border-bottom: 1px solid var(--line); align-items: center; }
+    form.filters input, form.filters select {
+      background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 10px; font: inherit; }
+    form.filters button { background: var(--accent); color: #001624;
+      border: 0; border-radius: 6px; padding: 6px 14px; font: inherit;
+      font-weight: 600; cursor: pointer; }
+    form.filters .spacer { flex: 1; }
+    main { padding: 16px 24px; }
+    .empty { color: var(--ink2); padding: 40px; text-align: center; }
+    ul.results { list-style: none; padding: 0; margin: 0; }
+    li.listing { padding: 12px 0; border-bottom: 1px solid var(--line); }
+    li.listing a.title { color: var(--ink); font-size: 15px; text-decoration: none; }
+    li.listing a.title:hover { color: var(--accent); }
+    li.listing .row { display: flex; gap: 12px; font-size: 12px;
+      color: var(--ink2); margin-top: 4px; }
+    li.listing .price { color: var(--price); font-weight: 600; }
+    .pager { display: flex; gap: 8px; padding: 16px 24px;
+      align-items: center; border-top: 1px solid var(--line); }
+    .pager a, .pager span { color: var(--ink); padding: 4px 10px;
+      border: 1px solid var(--line); border-radius: 6px; text-decoration: none; }
+    .pager a:hover { border-color: var(--accent); }
+    .pager .current { background: var(--panel); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>plane-finder</h1>
+    <div class="meta">
+      {{ total }} listing{{ total|pluralize }} from Craigslist aviation
+      &middot; <a href="/admin/">admin</a>
+    </div>
+  </header>
+
+  <form class="filters" method="get">
+    <input type="text" name="q" value="{{ q }}" placeholder="search title, location, site" />
+    <select name="site">
+      <option value="">— all sites —</option>
+      {% for s in site_choices %}
+        <option value="{{ s }}" {% if s == site %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">filter</button>
+    <span class="spacer"></span>
+    {% if q or site %}<a href="{% url 'listings:index' %}" style="color: var(--ink2);">clear</a>{% endif %}
+  </form>
+
+  <main>
+    {% if page.object_list %}
+      <ul class="results">
+        {% for L in page.object_list %}
+          <li class="listing">
+            <a class="title" href="{{ L.link }}" target="_blank" rel="noopener">{{ L.title }}</a>
+            <div class="row">
+              {% if L.price %}<span class="price">{{ L.price }}</span>{% endif %}
+              <span>[{{ L.site }}]</span>
+              {% if L.location %}<span>{{ L.location }}</span>{% endif %}
+              <span style="margin-left:auto;">first seen {{ L.first_seen|date:"Y-m-d H:i" }}</span>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="empty">
+        No listings yet. The background worker polls every
+        {{ settings.POLL_INTERVAL_MINUTES|default:"60" }} minutes — give it a moment, or run
+        <code>python manage.py poll_now</code> to trigger one immediately.
+      </div>
+    {% endif %}
+  </main>
+
+  {% if page.paginator.num_pages > 1 %}
+    <div class="pager">
+      {% if page.has_previous %}
+        <a href="?{% if q %}q={{ q }}&{% endif %}{% if site %}site={{ site }}&{% endif %}page={{ page.previous_page_number }}">prev</a>
+      {% endif %}
+      <span class="current">page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+      {% if page.has_next %}
+        <a href="?{% if q %}q={{ q }}&{% endif %}{% if site %}site={{ site }}&{% endif %}page={{ page.next_page_number }}">next</a>
+      {% endif %}
+    </div>
+  {% endif %}
+</body>
+</html>
