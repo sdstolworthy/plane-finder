@@ -147,6 +147,16 @@ POLL_USER_AGENT = os.environ.get(
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 )
 
+# Trade-A-Plane (Playwright + Chromium). Off by default — TAP is gated
+# by DataDome, which is fragile to bypass; turn this on once the worker
+# image has Playwright + the browser binary and you've decided to
+# spend the resource budget.
+POLL_TRADEAPLANE_ENABLED = _env_bool("POLL_TRADEAPLANE_ENABLED", default=False)
+POLL_TRADEAPLANE_CATEGORIES = _env_list(
+    "POLL_TRADEAPLANE_CATEGORIES",
+    default="Single Engine Piston",
+)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

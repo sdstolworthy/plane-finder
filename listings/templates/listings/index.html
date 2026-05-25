@@ -34,6 +34,11 @@
     li.listing .row { display: flex; gap: 12px; font-size: 12px;
       color: var(--ink2); margin-top: 4px; }
     li.listing .price { color: var(--price); font-weight: 600; }
+    li.listing .source-badge {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 4px; padding: 0 6px; font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
     .pager { display: flex; gap: 8px; padding: 16px 24px;
       align-items: center; border-top: 1px solid var(--line); }
     .pager a, .pager span { color: var(--ink); padding: 4px 10px;
@@ -46,13 +51,20 @@
   <header>
     <h1>plane-finder</h1>
     <div class="meta">
-      {{ total }} listing{{ total|pluralize }} from Craigslist aviation
+      {{ total }} aircraft listing{{ total|pluralize }}
+      across {{ source_choices|length }} source{{ source_choices|length|pluralize }}
       &middot; <a href="/admin/">admin</a>
     </div>
   </header>
 
   <form class="filters" method="get">
-    <input type="text" name="q" value="{{ q }}" placeholder="search title, location, site" />
+    <input type="text" name="q" value="{{ q }}" placeholder="search title, location, source" />
+    <select name="source">
+      <option value="">— all sources —</option>
+      {% for s in source_choices %}
+        <option value="{{ s }}" {% if s == source %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
     <select name="site">
       <option value="">— all sites —</option>
       {% for s in site_choices %}
@@ -61,7 +73,7 @@
     </select>
     <button type="submit">filter</button>
     <span class="spacer"></span>
-    {% if q or site %}<a href="{% url 'listings:index' %}" style="color: var(--ink2);">clear</a>{% endif %}
+    {% if q or source or site %}<a href="{% url 'listings:index' %}" style="color: var(--ink2);">clear</a>{% endif %}
   </form>
 
   <main>
@@ -72,7 +84,8 @@
             <a class="title" href="{{ L.link }}" target="_blank" rel="noopener">{{ L.title }}</a>
             <div class="row">
               {% if L.price %}<span class="price">{{ L.price }}</span>{% endif %}
-              <span>[{{ L.site }}]</span>
+              <span class="source-badge">{{ L.source }}</span>
+              {% if L.site and L.site != L.source %}<span>[{{ L.site }}]</span>{% endif %}
               {% if L.location %}<span>{{ L.location }}</span>{% endif %}
               <span style="margin-left:auto;">first seen {{ L.first_seen|date:"Y-m-d H:i" }}</span>
             </div>

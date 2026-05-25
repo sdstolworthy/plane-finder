@@ -14,8 +14,15 @@ def extract_posting_id(link: str) -> str:
 
 
 class Listing(models.Model):
-    """A single Craigslist aviation posting, deduped on its URL."""
+    """A single aircraft listing, deduped on its URL.
 
+    `source` is the scraper identifier (craigslist, tradeaplane, ...).
+    `site` is the source-specific sub-grouping — Craigslist subdomain
+    for Craigslist, the source name itself for sources without that
+    concept.
+    """
+
+    source = models.CharField(max_length=32, db_index=True, default="craigslist")
     site = models.CharField(max_length=64, db_index=True)
     posting_id = models.CharField(max_length=32, db_index=True, blank=True)
     title = models.CharField(max_length=512)
@@ -28,9 +35,10 @@ class Listing(models.Model):
     class Meta:
         ordering = ["-first_seen"]
         indexes = [
+            models.Index(fields=["source", "site"]),
             models.Index(fields=["site", "posting_id"]),
             models.Index(fields=["-first_seen"]),
         ]
 
     def __str__(self) -> str:
-        return f"[{self.site}] {self.title}"
+        return f"[{self.source}/{self.site}] {self.title}"

@@ -1,8 +1,10 @@
 # plane-finder
 
-Django web service that polls every Craigslist regional site's
-`aviation` category in the background, stores listings in Postgres, and
-serves a filterable list at `/`. Deployable to Coolify as-is.
+Django web service that polls a pluggable set of aircraft-listing
+sources (Craigslist today; Trade-A-Plane behind Playwright; Barnstormers
+/ Controller / etc. when added) in the background, stores listings in
+Postgres, and serves a filterable list at `/`. Deployable to Coolify
+as-is.
 
 ## Architecture
 
@@ -89,20 +91,63 @@ If the Coolify VM's IP range is on Craigslist's block list, you'll see
 zero scraped rows and 403s in the worker logs — there's no clean
 workaround short of routing through a residential proxy.
 
+## Adding a new scraper
+
+Sources live behind a `Scraper` ABC (`listings/scrapers/base.py`).
+Adding one is three steps:
+
+1. **Implement** `listings/scrapers/<name>.py`:
+   ```python
+   from .base import ScrapedListing, Scraper
+
+   class BarnstormersScraper(Scraper):
+       source = "barnstormers"
+
+       def fetch(self, query=None):
+           # hit the source, yield ScrapedListing(source="barnstormers", ...)
+           ...
+   ```
+2. **Register** in `listings/scrapers/__init__.py::build_registry()` —
+   add an instance to the returned list (optionally gated on a settings
+   flag, like the TAP scraper).
+3. **Done** — `listings/tasks.py::poll_all` will pick it up automatically.
+   Per-scraper failures are isolated; one broken source can't kill the
+   cycle.
+
+The model stores `source` and `site` separately. For sources without a
+sub-grouping concept (TAP, Barnstormers), set `site` equal to the
+source name. For Craigslist, `site` is the regional subdomain.
+
+## Notes on individual sources
+
+- **Craigslist** — works with plain HTTP and a Chrome-on-Linux UA. The
+  scraper enumerates `/about/sites`, then hits each subdomain's
+  `/search/ava`. RSS is 403'd at the edge so we parse the static HTML.
+- **Trade-A-Plane** — gated by DataDome (JS challenge + browser
+  fingerprinting). Disabled by default (`POLL_TRADEAPLANE_ENABLED`).
+  Even with Playwright + light stealth tweaks, datacenter IPs reliably
+  get served the CAPTCHA — when that happens the scraper logs
+  "blocked by DataDome" and returns empty. Use a residential proxy or
+  a paid scraping API (ScraperAPI/ZenRows/Bright Data) to get past it.
+
 ## Project layout
 
 ```
 plane-finder/
-├── Dockerfile
+├── Dockerfile                  # python:3.12-slim + Playwright Chromium
 ├── docker-compose.yaml         # web + worker + migrate + db, Coolify-aware
 ├── manage.py
 ├── requirements.txt
 ├── planefinder/                # Django project (settings, urls, wsgi)
 └── listings/                   # The app
-    ├── models.py               # Listing — deduped on URL
-    ├── scraper.py              # Pure Craigslist scraping helpers
-    ├── tasks.py                # poll_all() — the django-q2 task
-    ├── views.py                # GET / list + filter
+    ├── models.py               # Listing — deduped on URL, indexed by (source, site)
+    ├── scrapers/
+    │   ├── base.py             # Scraper ABC + ScrapedListing dataclass
+    │   ├── craigslist.py
+    │   ├── tradeaplane.py      # Playwright-driven, opt-in
+    │   └── __init__.py         # build_registry() — the single source of truth
+    ├── tasks.py                # poll_all() — iterates the registry
+    ├── views.py                # GET / list + filter (source, site, q)
     ├── admin.py                # Django admin for Listing
     ├── templates/listings/index.html
     └── management/commands/
